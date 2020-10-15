@@ -40,6 +40,7 @@ import {AbortController} from 'abortcontroller-polyfill/dist/cjs-ponyfill';
 import {PromiseQueue} from '@parcel/utils';
 import ParcelConfig from './ParcelConfig';
 import logger from '@parcel/logger';
+import {Disposable} from '@parcel/events';
 
 registerCoreWithSerializer();
 
@@ -54,6 +55,8 @@ export default class Parcel {
   #config /*: ParcelConfig*/;
   #farm /*: WorkerFarm*/;
   #initialized /*: boolean*/ = false;
+  #isDisposed /*: boolean */ = false;
+  #disposable /*: Disposable */ = new Disposable();
   #initialOptions /*: InitialParcelOptions*/;
   #reporterRunner /*: ReporterRunner*/;
   #resolvedOptions /*: ?ParcelOptions*/ = null;
@@ -106,18 +109,28 @@ export default class Parcel {
       resolvedOptions.inputFS,
       resolvedOptions.autoinstall,
     );
-    this.#farm =
-      this.#initialOptions.workerFarm ??
-      createWorkerFarm({
+
+    if (this.#initialOptions.workerFarm) {
+      if (this.#initialOptions.workerFarm.ending) {
+        throw new Error('Supplied WorkerFarm is ending');
+      }
+      this.#farm = this.#initialOptions.workerFarm;
+    } else {
+      this.#farm = createWorkerFarm({
         patchConsole: resolvedOptions.patchConsole,
       });
+    }
 
-    // ? Should we have a dispose function on the Parcel class or should we create these references
-    //  - in run and watch and dispose at the end of run and in the unsubsribe function of watch
-    let {ref: optionsRef} = await this.#farm.createSharedReference(
-      resolvedOptions,
-    );
-    let {ref: configRef} = await this.#farm.createSharedReference(config);
+    let {
+      dispose: disposeOptions,
+      ref: optionsRef,
+    } = await this.#farm.createSharedReference(resolvedOptions);
+    this.#disposable.add(disposeOptions);
+    let {
+      dispose: disposeConfig,
+      ref: configRef,
+    } = await this.#farm.createSharedReference(config);
+    this.#disposable.add(disposeConfig);
 
     this.#assetGraphBuilder = new AssetGraphBuilder();
     this.#runtimesAssetGraphBuilder = new AssetGraphBuilder();
@@ -175,16 +188,20 @@ export default class Parcel {
       this.#runtimesAssetGraphBuilder.writeToCache(),
     ]);
 
-    if (!this.#initialOptions.workerFarm) {
-      // If there wasn't a workerFarm passed in, we created it. End the farm.
-      await this.#farm.end();
-    }
-
     if (result.type === 'buildFailure') {
       throw new BuildError(result.diagnostics);
     }
 
     return result.bundleGraph;
+  }
+
+  async end(): Promise<void> {
+    await this.#disposable.dispose();
+
+    if (!this.#initialOptions.workerFarm) {
+      // If there wasn't a workerFarm passed in, we created it. End the farm.
+      await this.#farm.end();
+    }
   }
 
   async startNextBuild() {
@@ -265,7 +282,7 @@ export default class Parcel {
   }: {|
     signal?: AbortSignal,
     startTime?: number,
-  |}): Promise<BuildEvent> {
+  |} = {}): Promise<BuildEvent> {
     let options = nullthrows(this.#resolvedOptions);
     try {
       if (options.profile) {
