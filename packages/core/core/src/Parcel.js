@@ -83,7 +83,7 @@ export default class Parcel {
     this.#initialOptions = options;
   }
 
-  async init(): Promise<void> {
+  async _init(): Promise<void> {
     if (this.#initialized) {
       return;
     }
@@ -181,16 +181,16 @@ export default class Parcel {
   async run(): Promise<IBundleGraph<INamedBundle>> {
     let startTime = Date.now();
     if (!this.#initialized) {
-      await this.init();
+      await this._init();
     }
 
-    let result = await this.build({startTime});
+    let result = await this._build({startTime});
 
     if (result.type === 'buildFailure') {
       throw new BuildError(result.diagnostics);
     }
 
-    await this.end();
+    await this._end();
     return result.bundleGraph;
   }
 
@@ -204,12 +204,12 @@ export default class Parcel {
     ]);
   }
 
-  async startNextBuild() {
+  async _startNextBuild() {
     this.#watchAbortController = new AbortController();
 
     try {
       this.#watchEvents.emit({
-        buildEvent: await this.build({
+        buildEvent: await this._build({
           signal: this.#watchAbortController.signal,
         }),
       });
@@ -225,7 +225,7 @@ export default class Parcel {
     cb?: (err: ?Error, buildEvent?: BuildEvent) => mixed,
   ): Promise<AsyncSubscription> {
     if (!this.#initialized) {
-      await this.init();
+      await this._init();
     }
 
     let watchEventsDisposable;
@@ -241,7 +241,7 @@ export default class Parcel {
 
       // Kick off a first build, but don't await its results. Its results will
       // be provided to the callback.
-      this.#watchQueue.add(() => this.startNextBuild());
+      this.#watchQueue.add(() => this._startNextBuild());
       this.#watchQueue.run();
     }
 
@@ -260,7 +260,7 @@ export default class Parcel {
         await this.#reporterRunner.report({type: 'watchEnd'});
         this.#watchAbortController.abort();
         await this.#watchQueue.run();
-        await this.end();
+        await this._end();
       }
     };
 
@@ -275,7 +275,7 @@ export default class Parcel {
     };
   }
 
-  async build({
+  async _build({
     signal,
     startTime = Date.now(),
   }: {|
@@ -407,7 +407,7 @@ export default class Parcel {
             this.#watchAbortController.abort();
           }
 
-          this.#watchQueue.add(() => this.startNextBuild());
+          this.#watchQueue.add(() => this._startNextBuild());
           this.#watchQueue.run();
         }
       },
